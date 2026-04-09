@@ -150,7 +150,7 @@ function useChat() {
 
     const enrichedUserMsg = { role: 'user', content: promptParts.join('\n\n') };
 
-    setMsgs((m) => [...m, { role: 'user', content: userText }, { role: 'assistant', content: '', thinking: '' }]);
+    setMsgs((m) => [...m, { role: 'user', content: userText }, { role: 'assistant', content: '', thinking: '', tokens: 0 }]);
 
     window.api.offChatListeners();
 
@@ -162,7 +162,8 @@ function useChat() {
       }
       setMsgs((m) => {
         const copy = [...m];
-        copy[copy.length - 1] = { role: 'assistant', content: streamBuf.current, thinking: thinkBuf.current };
+        const prev = copy[copy.length - 1];
+        copy[copy.length - 1] = { role: 'assistant', content: streamBuf.current, thinking: thinkBuf.current, tokens: (prev.tokens || 0) + 1 };
         return copy;
       });
     });
@@ -230,20 +231,79 @@ function sortedEntries(obj) {
   });
 }
 
+const FILE_ICON_COLORS = {
+  js: '#cbcb41', mjs: '#cbcb41', cjs: '#cbcb41',
+  jsx: '#61dafb', tsx: '#61dafb',
+  ts: '#3178c6',
+  css: '#7b5ea7', scss: '#c6538c', less: '#2a7dbc',
+  json: '#cbcb41', jsonc: '#cbcb41',
+  md: '#519aba', mdx: '#519aba',
+  html: '#e44d26', htm: '#e44d26',
+  py: '#3572a5', rb: '#cc342d', go: '#00acd7', rs: '#ce4a1a',
+  svg: '#ff9900', png: '#a074c4', jpg: '#a074c4', gif: '#a074c4',
+  sh: '#4eaa25', env: '#cbcb41',
+};
+
+function getFileIconColor(name) {
+  if (name.startsWith('.git')) return '#f05033';
+  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+  return FILE_ICON_COLORS[ext] || '#8a8a8a';
+}
+
+function VscFileIcon({ name }) {
+  const c = getFileIconColor(name);
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+      <path d="M3 2h7l3 3v9H3V2z" fill={c} fillOpacity="0.18" stroke={c} strokeWidth="1.1"/>
+      <path d="M10 2v3h3" fill="none" stroke={c} strokeWidth="1.1"/>
+    </svg>
+  );
+}
+
+function VscFolderIcon({ open }) {
+  return open ? (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+      <path d="M1.5 5.5h4.2l1.3 1.5H14L12.5 12h-11z" fill="#dcb67a"/>
+      <path d="M1.5 5.5h4.2l1.3-1.5h3V5.5" fill="#c09a4e"/>
+    </svg>
+  ) : (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+      <path d="M1.5 5h4.2l1.3 1.5H14v6h-12.5z" fill="#dcb67a"/>
+      <path d="M1.5 5h4.2l1.3-1.5h3V5" fill="#c09a4e"/>
+    </svg>
+  );
+}
+
+function VscChevron({ open }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, transition: 'transform 0.12s', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}>
+      <path d="M5 6l3 3 3-3" stroke="#7a7a70" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
 function TreeNode({ name, node, depth, activeFile, onSelectFile }) {
   const [open, setOpen] = useState(true);
   const [hovered, setHovered] = useState(false);
-  const hoverProps = { onMouseEnter: () => setHovered(true), onMouseLeave: () => setHovered(false) };
+  const indent = depth * 16;
 
   if (node.__file) {
     const isActive = activeFile === node.__file.path;
     return (
       <div
-        style={{ ...styles.treeFile, paddingLeft: 10 + depth * 12, background: isActive ? '#d97706' : hovered ? '#eceae4' : 'transparent', color: isActive ? '#fff' : hovered ? '#1a1a19' : styles.treeFile.color, cursor: 'pointer' }}
-        title={node.__file.path} onClick={() => onSelectFile(node.__file.path)} {...hoverProps}
+        style={{
+          display: 'flex', alignItems: 'center', height: 22,
+          paddingLeft: 8 + indent, paddingRight: 8, gap: 5,
+          cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', overflow: 'hidden',
+          background: isActive ? '#fde68a' : hovered ? '#e8e6df' : 'transparent',
+          borderLeft: isActive ? '2px solid #d97706' : '2px solid transparent',
+        }}
+        title={node.__file.path}
+        onClick={() => onSelectFile(node.__file.path)}
+        onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
       >
-        <span style={{ ...styles.treeFileDot, color: isActive ? '#fde68a' : hovered ? '#a0a098' : styles.treeFileDot.color }}>·</span>
-        {name}
+        <VscFileIcon name={name} />
+        <span style={{ fontSize: 13, color: isActive ? '#92400e' : '#1e1e1e', fontWeight: isActive ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
       </div>
     );
   }
@@ -251,45 +311,103 @@ function TreeNode({ name, node, depth, activeFile, onSelectFile }) {
   return (
     <div>
       <div
-        style={{ ...styles.treeDir, paddingLeft: 4 + depth * 12, background: hovered ? '#eceae4' : 'transparent', color: hovered ? '#1a1a19' : styles.treeDir.color }}
-        onClick={() => setOpen((o) => !o)} {...hoverProps}
+        style={{
+          display: 'flex', alignItems: 'center', height: 22,
+          paddingLeft: 2 + indent, paddingRight: 8, gap: 3,
+          cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
+          background: hovered ? '#e8e6df' : 'transparent',
+        }}
+        onClick={() => setOpen((o) => !o)}
+        onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
       >
-        <span style={{ ...styles.treeCaret, color: hovered ? '#5c5c54' : styles.treeCaret.color, transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', display: 'inline-block', transition: 'transform 0.15s ease' }}>▾</span>
-        {name}
+        <VscChevron open={open} />
+        <VscFolderIcon open={open} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#1e1e1e' }}>{name}</span>
       </div>
-      {open && sortedEntries(node.__children).map(([n, child]) => (
-        <TreeNode key={n} name={n} node={child} depth={depth + 1} activeFile={activeFile} onSelectFile={onSelectFile} />
-      ))}
+      {open && (
+        <div style={{ borderLeft: '1px solid #e0ddd6', marginLeft: 10 + indent }}>
+          {sortedEntries(node.__children).map(([n, child]) => (
+            <TreeNode key={n} name={n} node={child} depth={depth + 1} activeFile={activeFile} onSelectFile={onSelectFile} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-// ── sidebar ────────────────────────────────────────────────────────────────
-function Sidebar({ folder, files, onPickFolder, width, activeFile, onSelectFile, indexStatus, indexing, indexProgress }) {
-  const tree = folder && files.length ? buildFileTree(files, folder) : null;
+// ── folder dropdown ────────────────────────────────────────────────────────
+function FolderDropdown({ onPickFolder, onSelectFolder, recentFolders }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
 
-  let indexLabel = null;
-  if (indexing) {
-    const { done, total } = indexProgress;
-    if (!total) indexLabel = 'Indexing…';
-    else if (done === 0) indexLabel = 'Loading model…';
-    else indexLabel = `Indexing… ${done}/${total}`;
-  } else if (indexStatus?.indexed) {
-    indexLabel = `${indexStatus.chunkCount} chunks indexed`;
-  }
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div style={{ position: 'relative' }} ref={ref}>
+      <button style={styles.folderBtn} onClick={() => setOpen((o) => !o)}>
+        <FolderIcon /> Select folder
+      </button>
+      {open && (
+        <div style={styles.folderMenu}>
+          {recentFolders.length > 0 && (
+            <>
+              <div style={styles.folderMenuSection}>Recent</div>
+              {recentFolders.map((p) => (
+                <div
+                  key={p} style={styles.folderMenuItem}
+                  onClick={() => { onSelectFolder(p); setOpen(false); }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#f5f4f0'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <FolderIcon style={{ color: '#8c8c84', flexShrink: 0 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={styles.folderMenuName}>{p.split(/[\\/]/).pop()}</div>
+                    <div style={styles.folderMenuPath}>{p}</div>
+                  </div>
+                </div>
+              ))}
+              <div style={styles.folderMenuDivider} />
+            </>
+          )}
+          <div
+            style={{ ...styles.folderMenuItem, background: '#f5f4f0' }}
+            onClick={() => { onPickFolder(); setOpen(false); }}
+            onMouseEnter={(e) => e.currentTarget.style.background = '#eeece6'}
+            onMouseLeave={(e) => e.currentTarget.style.background = '#f5f4f0'}
+          >
+            <FolderIcon style={{ color: '#3a3a33', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 500, color: '#1a1a19' }}>Choose a different folder</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FolderIcon({ style }) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={style}>
+      <path d="M1.5 3.5C1.5 2.94772 1.94772 2.5 2.5 2.5H5.79289L7.14645 3.85355C7.24021 3.94732 7.36739 4 7.5 4H12.5C13.0523 4 13.5 4.44772 13.5 5V11.5C13.5 12.0523 13.0523 12.5 12.5 12.5H2.5C1.94772 12.5 1.5 12.0523 1.5 11.5V3.5Z" stroke="currentColor" strokeWidth="1.2" fill="none"/>
+    </svg>
+  );
+}
+
+// ── sidebar ────────────────────────────────────────────────────────────────
+function Sidebar({ folder, files, onPickFolder, onSelectFolder, recentFolders, width, activeFile, onSelectFile }) {
+  const tree = folder && files.length ? buildFileTree(files, folder) : null;
 
   return (
     <div style={{ ...styles.sidebar, width }}>
-      <button style={{ ...styles.btn, background: '#000', color: '#fff', border: '1px solid #e5e3dc' }} onClick={onPickFolder}>
-        {folder ? 'Change folder' : 'Open folder'}
-      </button>
+      <FolderDropdown onPickFolder={onPickFolder} onSelectFolder={onSelectFolder} recentFolders={recentFolders} />
 
       {folder && (
         <>
           <div style={styles.folderPath} title={folder}>{folder.split(/[\\/]/).pop()}</div>
-          {indexLabel && (
-            <div style={indexing ? styles.indexBadgeLoading : styles.indexBadge}>{indexLabel}</div>
-          )}
           {activeFile && (
             <div style={styles.activeFileLabel} title={activeFile}>✎ {activeFile.split(/[\\/]/).pop()}</div>
           )}
@@ -307,6 +425,14 @@ function Sidebar({ folder, files, onPickFolder, width, activeFile, onSelectFile,
 }
 
 // ── edit blocks ────────────────────────────────────────────────────────────
+function stripEditMarkup(text) {
+  // Remove complete edit blocks (already rendered as EditBlock components)
+  let s = text.replace(/<edit\b[^>]*>[\s\S]*?<\/edit>/gi, '');
+  // Remove incomplete edit block still streaming (opening tag may not have > yet)
+  s = s.replace(/<edit\b[\s\S]*/i, '');
+  return s.trim();
+}
+
 function parseEditBlocks(text) {
   const parts = [];
   const editRegex = /<edit[\s]+(?:path|file|filename)="([^"]+)"[^>]*>\s*(?:<content>)?\n?([\s\S]*?)\n?(?:<\/content>\s*)?<\/edit>/g;
@@ -336,12 +462,18 @@ function parseEditBlocks(text) {
   // Keep only the last edit per path — it's always the intended one.
   const lastEditIdx = new Map();
   parts.forEach((p, i) => { if (p.type === 'edit') lastEditIdx.set(p.path, i); });
-  return parts.filter((p, i) => p.type !== 'edit' || lastEditIdx.get(p.path) === i);
+  return parts.filter((p, i) => {
+    if (p.type === 'edit') return lastEditIdx.get(p.path) === i;
+    // Drop text fragments that contain raw diff markers (malformed/incomplete edit blocks)
+    if (/<<<<<<< SEARCH|>>>>>>> REPLACE/.test(p.content)) return false;
+    return true;
+  });
 }
 
 function EditBlock({ edit }) {
   const [applied, setApplied] = useState(false);
   const [error, setError] = useState(null);
+  const [expanded, setExpanded] = useState(true);
   const fileName = edit.path.split(/[\\/]/).pop();
 
   const handleApply = async () => {
@@ -354,32 +486,34 @@ function EditBlock({ edit }) {
   return (
     <div style={styles.editBlock}>
       <div style={styles.editHeader}>
-        <span style={styles.editPath} title={edit.path}>✎ {fileName}</span>
+        <span style={{ ...styles.editPath, cursor: 'pointer' }} title={edit.path} onClick={() => setExpanded((e) => !e)}>
+          ✎ {fileName} <span style={{ fontSize: 10, color: '#b45309' }}>{expanded ? '▴' : '▾'}</span>
+        </span>
         {applied ? <span style={styles.editApplied}>✓ Applied</span>
           : error ? <span style={styles.editError} title={error}>✗ {error.length > 60 ? error.slice(0, 60) + '…' : error}</span>
           : <button style={styles.editApplyBtn} onClick={handleApply}>Apply</button>}
       </div>
-      {edit.fullContent !== null ? (
+      {expanded && (edit.fullContent !== null ? (
         <pre style={styles.editCode}>{edit.fullContent}</pre>
       ) : (
         <div>
           {edit.hunks.map((h, i) => (
-            <div key={i} style={i > 0 ? { borderTop: '1px solid #fde68a' } : {}}>
-              <pre style={{ ...styles.editCode, background: '#fff5f5', color: '#7f1d1d', marginBottom: 0 }}>
+            <div key={i} style={i > 0 ? { borderTop: '1px solid #e5e7eb' } : {}}>
+              <pre style={{ ...styles.editCode, background: '#fff1f2', color: '#be123c', marginBottom: 0 }}>
                 {h.search.split('\n').map((line, j) => <span key={j} style={{ display: 'block' }}>- {line}</span>)}
               </pre>
-              <pre style={{ ...styles.editCode, background: '#f0fdf4', color: '#14532d', marginTop: 0 }}>
+              <pre style={{ ...styles.editCode, background: '#f0fdf4', color: '#15803d', marginTop: 0 }}>
                 {h.replace.split('\n').map((line, j) => <span key={j} style={{ display: 'block' }}>+ {line}</span>)}
               </pre>
             </div>
           ))}
         </div>
-      )}
+      ))}
     </div>
   );
 }
 
-function CopyButton({ text }) {
+function CopyButton({ text, large }) {
   const [copied, setCopied] = useState(false);
   const doCopy = () => {
     navigator.clipboard.writeText(text).then(() => {
@@ -387,6 +521,13 @@ function CopyButton({ text }) {
       setTimeout(() => setCopied(false), 2000);
     });
   };
+  if (large) {
+    return (
+      <button onClick={doCopy} style={styles.copyBtnLarge} title="Copy last response">
+        {copied ? '✓ Copied' : '⎘ Copy'}
+      </button>
+    );
+  }
   return (
     <button onClick={doCopy} style={styles.copyBtn} title="Copy to clipboard">
       {copied ? '✓' : '⎘'}
@@ -394,7 +535,24 @@ function CopyButton({ text }) {
   );
 }
 
-function Message({ msg, isThinking, model }) {
+function TitleBar() {
+  return (
+    <div style={styles.titleBar}>
+      <div style={styles.titleBarLeft}>
+        <button style={styles.titleBarIconBtn} title="Menu">☰</button>
+        <button style={styles.titleBarIconBtn} title="Toggle sidebar">⊡</button>
+        <button style={styles.titleBarIconBtn} title="Back" disabled>‹</button>
+        <button style={styles.titleBarIconBtn} title="Forward" disabled>›</button>
+      </div>
+    </div>
+  );
+}
+
+const THINKING_PHRASES = ['Thinking…', 'Reasoning…', 'Pondering…', 'Considering…', 'Reflecting…', 'Mulling…'];
+const WORKING_PHRASES = ['Working…', 'Applying…', 'Editing…', 'Patching…', 'Updating…', 'Coding…'];
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function Message({ msg, isThinking, isStreaming, model }) {
   const isUser = msg.role === 'user';
   // Memoised: parseEditBlocks runs heavy regex — only recompute when content changes
   const parts = useMemo(
@@ -402,18 +560,33 @@ function Message({ msg, isThinking, model }) {
     [isUser, msg.content],
   );
   const [showThink, setShowThink] = useState(false);
+  const thinkingPhrase = useMemo(() => pick(THINKING_PHRASES), []);
+  const workingPhrase = useMemo(() => pick(WORKING_PHRASES), []);
+  const [elapsed, setElapsed] = useState(0);
+
+  const hasCompleteEdit = parts && parts.some((p) => p.type === 'edit');
+  const isWorking = isStreaming && !isThinking && msg.content && msg.content.includes('<edit') && !hasCompleteEdit;
+  const isActive = isThinking || isWorking;
+
+  useEffect(() => {
+    if (!isActive) return;
+    setElapsed(0);
+    const id = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [isActive]);
 
   return (
     <div style={{ ...styles.message, ...(isUser ? styles.messageUser : styles.messageAssistant) }}>
-      <span style={styles.messageRole}>{isUser ? 'you' : 'ai'}</span>
-      {isThinking ? (
-        <div style={styles.messageContent}>
-          <div style={styles.thinkingRow}><Spinner /><span style={styles.thinkingModel}>{model}</span></div>
-          <em style={styles.thinkingText}>Thinking…</em>
+      {isUser && <span style={styles.messageRole}>you</span>}
+      {isActive ? (
+        <div style={styles.thinkingInline}>
+          <Spinner />
+          <em style={styles.thinkingText}>{isThinking ? thinkingPhrase : workingPhrase}</em>
+          <span style={styles.thinkingMeta}>{elapsed}s</span>
+          {msg.tokens > 0 && <span style={styles.thinkingMeta}>{msg.tokens} tok</span>}
         </div>
       ) : parts && parts.some((p) => p.type === 'edit') ? (
-        <div style={{ ...styles.messageContent, position: 'relative' }}>
-          <CopyButton text={msg.content} />
+        <div style={styles.messageContent}>
           {msg.thinking && (
             <div>
               <div className="think-label" style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: '#a0a098', marginBottom: 4, cursor: 'pointer' }} onClick={() => setShowThink(s => !s)}>
@@ -423,16 +596,15 @@ function Message({ msg, isThinking, model }) {
             </div>
           )}
           {parts.map((p, i) =>
-            p.type === 'text' ? <MarkdownContent key={i} text={p.content} /> : <EditBlock key={i} edit={p} />
+            p.type === 'edit' ? <EditBlock key={i} edit={p} /> : null
           )}
         </div>
       ) : (
-        <div style={{ ...styles.messageContent, position: 'relative' }}>
+        <div style={styles.messageContent}>
           {isUser ? (
             <span style={styles.userText}>{msg.content}</span>
           ) : (
             <>
-              <CopyButton text={msg.content} />
               {msg.thinking && (
                 <div>
                   <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: '#a0a098', marginBottom: 4, cursor: 'pointer' }} onClick={() => setShowThink(s => !s)}>
@@ -441,7 +613,7 @@ function Message({ msg, isThinking, model }) {
                   {showThink && <div className="think-block">{msg.thinking}</div>}
                 </div>
               )}
-              <MarkdownContent text={msg.content} />
+              <MarkdownContent text={stripEditMarkup(msg.content)} />
             </>
           )}
         </div>
@@ -511,7 +683,49 @@ function EditsDropup({ edits }) {
   );
 }
 
-function ChatInput({ onSend, onStop, streaming, edits }) {
+function ModelDropup({ model, ollamaModels, setModel }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const displayName = model || 'No models';
+
+  return (
+    <div style={{ position: 'relative' }} ref={ref}>
+      {open && (
+        <div style={styles.modelMenu}>
+          <div style={styles.folderMenuSection}>Model</div>
+          {ollamaModels.length === 0
+            ? <div style={{ padding: '8px 14px', fontSize: 12, color: '#8c8c84' }}>No models — is Ollama running?</div>
+            : ollamaModels.map((m) => (
+              <div
+                key={m}
+                style={{ ...styles.folderMenuItem, background: m === model ? '#f5f4f0' : 'transparent', alignItems: 'center' }}
+                onClick={() => { setModel(m); setOpen(false); }}
+                onMouseEnter={(e) => e.currentTarget.style.background = '#f5f4f0'}
+                onMouseLeave={(e) => e.currentTarget.style.background = m === model ? '#f5f4f0' : 'transparent'}
+              >
+                <span style={{ fontSize: 13, color: '#1a1a19', fontWeight: m === model ? 600 : 400 }}>{m}</span>
+                {m === model && <span style={{ marginLeft: 'auto', fontSize: 11, color: '#8c8c84' }}>✓</span>}
+              </div>
+            ))
+          }
+        </div>
+      )}
+      <button style={styles.modelBtn} onClick={() => setOpen((o) => !o)}>
+        {displayName} <span style={{ fontSize: 10, color: '#8c8c84' }}>▾</span>
+      </button>
+    </div>
+  );
+}
+
+function ChatInput({ onSend, onStop, streaming, edits, model, ollamaModels, setModel, think, setThink, indexing, indexProgress, lastResponse }) {
   const [text, setText] = useState('');
   const [focused, setFocused] = useState(false);
   const ref = useRef(null);
@@ -540,6 +754,7 @@ function ChatInput({ onSend, onStop, streaming, edits }) {
 
   return (
     <div style={styles.inputWrap}>
+      {lastResponse && <CopyButton text={lastResponse} large />}
       <div style={{ ...styles.inputBox, ...(focused ? styles.inputBoxFocused : {}) }}>
         <textarea
           ref={ref} style={styles.textarea} placeholder="Ask anything about your code…"
@@ -547,13 +762,32 @@ function ChatInput({ onSend, onStop, streaming, edits }) {
           onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} rows={1}
         />
         <div style={styles.inputFooter}>
-          <span style={styles.hint}>{streaming ? 'generating… (Esc to stop)' : 'Enter to send · Shift+Enter for newline'}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              style={{ ...styles.paramBtn, ...(think ? styles.paramBtnOn : {}) }}
+              onClick={() => setThink((t) => !t)}
+              title="Enable extended reasoning"
+            >◈ Think</button>
             <EditsDropup edits={edits} />
-            {streaming
-              ? <button style={styles.stopBtn} onClick={onStop} title="Stop generating">■</button>
-              : <button style={{ ...styles.sendBtn, ...(canSend ? styles.sendBtnActive : {}) }} onClick={submit} disabled={!canSend}>↑</button>
-            }
+            {indexing && (
+              <div style={styles.indexProgressWrap}>
+                <span style={styles.indexProgressLabel}>
+                  {indexProgress.total === 0 ? 'Loading…' : `${indexProgress.done}/${indexProgress.total}`}
+                </span>
+                <div style={styles.indexProgressTrack}>
+                  <div style={{
+                    ...styles.indexProgressFill,
+                    width: indexProgress.total > 0
+                      ? `${Math.round((indexProgress.done / indexProgress.total) * 100)}%`
+                      : '0%',
+                  }} />
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ModelDropup model={model} ollamaModels={ollamaModels} setModel={setModel} />
+            {streaming && <button style={styles.stopBtn} onClick={onStop} title="Stop generating">■</button>}
           </div>
         </div>
       </div>
@@ -655,6 +889,9 @@ const EMBED_MODEL = 'nomic-embed-text';
 
 export default function App() {
   const [folder, setFolder] = useState(() => localStorage.getItem('codelocal-folder') || null);
+  const [recentFolders, setRecentFolders] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('codelocal-recent') || '[]'); } catch { return []; }
+  });
   const [files, setFiles] = useState([]);
   const [model, setModel] = useState('');
   const [ollamaModels, setOllamaModels] = useState([]);
@@ -754,18 +991,29 @@ export default function App() {
     await refreshIndexStatus(f);
   };
 
+  const saveRecent = (f) => {
+    const updated = [f, ...recentFolders.filter((r) => r !== f)].slice(0, 5);
+    setRecentFolders(updated);
+    localStorage.setItem('codelocal-recent', JSON.stringify(updated));
+  };
+
+  const applyFolder = async (f) => {
+    localStorage.setItem('codelocal-folder', f);
+    saveRecent(f);
+    setFolder(f);
+    setFiles([]);
+    setIndexStatus(null);
+    await loadFiles(f);
+    handleIndex(f);
+    startWatching(f);
+  };
+
   const pickFolder = async () => {
     const f = await window.api.pickFolder();
-    if (f) {
-      localStorage.setItem('codelocal-folder', f);
-      setFolder(f);
-      setFiles([]);
-      setIndexStatus(null);
-      await loadFiles(f);
-      handleIndex(f);
-      startWatching(f);
-    }
+    if (f) applyFolder(f);
   };
+
+  const selectFolder = (f) => applyFolder(f);
 
   const startWatching = (f) => {
     window.api.offFolderChanged();
@@ -809,11 +1057,14 @@ export default function App() {
           .slice(0, 3)
           .map(([p]) => p);
 
-        // 2. Slice: get relevant code ranges (±40 lines, merged) from disk
+        // 2. For top files, send the full file content so the model can see all
+        //    definitions (e.g. styles objects at the end of large single files).
+        //    Cap at 60 000 chars (~15 000 tokens) per file to stay within context.
         const topFiles = (await Promise.all(
           topFilePaths.map(async (p) => {
-            const sliced = await window.api.sliceFile(p, chunksByFile.get(p));
-            return sliced ? { path: p, content: sliced } : null;
+            const res = await window.api.readFile(p);
+            if (!res.ok) return null;
+            return { path: p, content: res.content.slice(0, 60000) };
           })
         )).filter(Boolean);
 
@@ -902,36 +1153,16 @@ export default function App() {
   );
 
   return (
-    <div style={styles.root}>
+    <div style={styles.shell}>
+      <TitleBar />
+      <div style={styles.root}>
       <Sidebar
-        folder={folder} files={files} onPickFolder={pickFolder}
+        folder={folder} files={files} onPickFolder={pickFolder} onSelectFolder={selectFolder} recentFolders={recentFolders}
         width={sidebarWidth} activeFile={activeFile} onSelectFile={setActiveFile}
-        indexStatus={indexStatus} indexing={indexing} indexProgress={indexProgress}
       />
       <div style={styles.resizeHandle} onMouseDown={startResize} />
 
       <div style={styles.main}>
-        <div style={styles.toolbar}>
-          <select style={styles.select} value={model} onChange={(e) => setModel(e.target.value)}>
-            {ollamaModels.length
-              ? ollamaModels.map((m) => <option key={m}>{m}</option>)
-              : <option value="">no models — is Ollama running?</option>}
-          </select>
-
-          {files.length > 0 && <span style={styles.badge}>{files.length} files</span>}
-          {activeFile && <span style={styles.activeBadge} title={activeFile}>✎ {activeFile.split(/[\\/]/).pop()}</span>}
-
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-            <button
-              style={{ ...styles.paramBtn, ...(think ? styles.paramBtnOn : {}) }}
-              onClick={() => setThink((t) => !t)}
-              title="Enable extended reasoning before responding"
-            >
-              ◈ Think
-            </button>
-          </div>
-        </div>
-
         <div ref={messagesRef} style={styles.messages} onScroll={handleMessagesScroll}>
           {messages.length === 0 && (
             <div style={styles.empty}>
@@ -943,6 +1174,7 @@ export default function App() {
             <Message
               key={i} msg={m} model={model}
               isThinking={streaming && m.role === 'assistant' && m.content === '' && i === messages.length - 1}
+              isStreaming={streaming && m.role === 'assistant' && i === messages.length - 1}
             />
           ))}
           <div ref={bottomRef} />
@@ -951,29 +1183,41 @@ export default function App() {
         <ChatInput
           onSend={handleSend} onStop={stop} streaming={streaming}
           edits={edits}
+          model={model} ollamaModels={ollamaModels} setModel={setModel}
+          think={think} setThink={setThink}
+          indexing={indexing} indexProgress={indexProgress}
+          lastResponse={[...messages].reverse().find((m) => m.role === 'assistant' && m.content)?.content ?? null}
         />
       </div>
+    </div>
     </div>
   );
 }
 
 // ── styles ─────────────────────────────────────────────────────────────────
 const styles = {
-  root: { display: 'flex', height: '100vh', background: '#f9f8f5', color: '#1a1a19' },
-  sidebar: { background: '#f3f2ee', display: 'flex', flexDirection: 'column', gap: 8, padding: 12, overflow: 'hidden', flexShrink: 0 },
+  shell: { display: 'flex', flexDirection: 'column', height: '100vh', background: '#f5f4f0', color: '#1a1a19' },
+  root: { display: 'flex', flex: 1, overflow: 'hidden', background: '#f5f4f0', color: '#1a1a19' },
+  // ── title bar ──────────────────────────────────────────────────────────────
+  titleBar: { height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', background: '#f3f2ee', borderBottom: '1px solid #e5e3dc', WebkitAppRegion: 'drag', userSelect: 'none' },
+  titleBarLeft: { display: 'flex', alignItems: 'center', gap: 2, paddingLeft: 12, WebkitAppRegion: 'no-drag' },
+  titleBarCenter: { flex: 1, display: 'flex', justifyContent: 'center', WebkitAppRegion: 'no-drag' },
+  titleBarIconBtn: { background: 'none', border: 'none', cursor: 'pointer', color: '#8c8c84', fontSize: 16, width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitAppRegion: 'no-drag' },
+  sidebar: { background: '#f3f2ee', display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 0 12px 12px', overflow: 'hidden', flexShrink: 0 },
   resizeHandle: { width: 4, cursor: 'col-resize', background: 'transparent', borderRight: '1px solid #e5e3dc', flexShrink: 0 },
   folderPath: { fontSize: 12, color: '#8c8c84', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   fileList: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', marginTop: 4 },
-  treeDir: { fontSize: 13, fontWeight: 600, color: '#3a3a33', padding: '5px 6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, userSelect: 'none', borderRadius: 5, whiteSpace: 'nowrap', transition: 'background 0.1s, color 0.1s' },
-  treeCaret: { fontSize: 11, color: '#a0a098', flexShrink: 0, width: 12 },
-  treeFile: { fontSize: 12, color: '#6b6b63', padding: '4px 6px', display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', borderRadius: 5, transition: 'background 0.1s, color 0.1s' },
-  treeFileDot: { fontSize: 10, color: '#c0beb6', flexShrink: 0 },
   btn: { border: 'none', borderRadius: 6, padding: '6px 10px', cursor: 'pointer', fontSize: 12 },
-  main: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-  toolbar: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid #e5e3dc', background: '#f3f2ee' },
-  select: { background: '#ffffff', color: '#1a1a19', border: '1px solid #e5e3dc', borderRadius: 6, padding: '4px 8px', fontSize: 12, cursor: 'pointer' },
+  folderBtn: { display: 'flex', alignItems: 'center', gap: 6, background: '#1a1a19', color: '#ffffff', border: '1px solid #1a1a19', borderRadius: 8, padding: '6px 10px', fontSize: 12, fontWeight: 500, cursor: 'pointer', width: '100%' },
+  folderMenu: { position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0, background: '#ffffff', border: '1px solid #e0deda', borderRadius: 12, boxShadow: '0 -4px 20px rgba(0,0,0,0.12)', overflow: 'hidden', zIndex: 200, minWidth: 220 },
+  folderMenuSection: { fontSize: 11, fontWeight: 600, color: '#8c8c84', padding: '10px 14px 4px', letterSpacing: 0.3, textTransform: 'uppercase' },
+  folderMenuItem: { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 14px', cursor: 'pointer', transition: 'background 0.1s' },
+  folderMenuName: { fontSize: 13, fontWeight: 600, color: '#1a1a19', lineHeight: 1.3 },
+  folderMenuPath: { fontSize: 11, color: '#8c8c84', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  folderMenuDivider: { height: 1, background: '#f0ede8', margin: '4px 0' },
+  main: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#f5f4f0' },
   badge: { fontSize: 11, color: '#166534', background: '#dcfce7', border: '1px solid #bbf7d0', borderRadius: 12, padding: '2px 8px' },
-  messages: { flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 },
+  messages: { flex: 1, overflowY: 'auto', padding: '20px 24px 12px', display: 'flex', flexDirection: 'column', gap: 14, background: '#f5f4f0' },
   empty: { color: '#8c8c84', fontSize: 13, margin: 'auto', textAlign: 'center', lineHeight: 2 },
   message: { display: 'flex', flexDirection: 'column', gap: 4, maxWidth: '90%' },
   messageUser: { alignSelf: 'flex-end', alignItems: 'flex-end' },
@@ -981,21 +1225,25 @@ const styles = {
   messageRole: { fontSize: 10, color: '#8c8c84', letterSpacing: 1 },
   messageContent: { background: '#ffffff', border: '1px solid #e5e3dc', borderRadius: 8, padding: '10px 14px', lineHeight: 1.6, fontSize: 13, color: '#1a1a19' },
   copyBtn: { position: 'absolute', top: 6, right: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#a0a098', fontSize: 13, padding: '2px 4px', borderRadius: 4, opacity: 0.6 },
+  copyBtnLarge: { display: 'flex', alignItems: 'center', gap: 6, background: '#1a1a19', color: '#ffffff', border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', marginBottom: 8, alignSelf: 'flex-start' },
   userText: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--mono)' },
   markdownBody: { fontFamily: 'system-ui, sans-serif', fontSize: 13, lineHeight: 1.7, color: '#1a1a19', wordBreak: 'break-word' },
-  spinnerChar: { fontSize: 14, color: '#d97706', fontStyle: 'normal' },
-  thinkingRow: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 },
-  thinkingModel: { fontSize: 12, fontWeight: 600, color: '#5c5c54' },
-  thinkingText: { fontSize: 12, color: '#8c8c84', fontStyle: 'italic' },
-  inputWrap: { padding: '12px 20px 16px', borderTop: '1px solid #e5e3dc', background: '#f9f8f5' },
-  inputBox: { background: '#ffffff', border: '1px solid #d9d7d0', borderRadius: 12, overflow: 'hidden', transition: 'border-color 0.15s, box-shadow 0.15s' },
-  inputBoxFocused: { borderColor: '#a8a6a0', boxShadow: '0 0 0 3px rgba(0,0,0,0.06)' },
-  textarea: { display: 'block', width: '100%', background: 'transparent', color: '#1a1a19', border: 'none', padding: '12px 14px 6px', fontSize: 14, fontFamily: 'var(--mono)', resize: 'none', outline: 'none', lineHeight: 1.6, minHeight: 44, maxHeight: 320, overflowY: 'auto' },
-  inputFooter: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px 8px 14px' },
-  hint: { fontSize: 11, color: '#b0aea8' },
-  sendBtn: { width: 28, height: 28, borderRadius: 8, border: 'none', background: '#e5e3dc', color: '#8c8c84', fontSize: 16, cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.15s, color 0.15s' },
+  spinnerChar: { fontSize: 18, color: '#d97706', fontStyle: 'normal' },
+  thinkingInline: { display: 'flex', alignItems: 'center', gap: 8 },
+  thinkingModel: { fontSize: 15, fontWeight: 600, color: '#3a3a33' },
+  thinkingText: { fontSize: 15, color: '#5c5c54', fontStyle: 'italic' },
+  thinkingMeta: { fontSize: 12, color: '#a0a098', fontStyle: 'normal' },
+  inputWrap: { padding: '8px 16px 16px', background: '#f5f4f0', display: 'flex', flexDirection: 'column' },
+  inputBox: { background: '#ffffff', border: 'none', borderRadius: 18, overflow: 'visible', boxShadow: 'none', transition: 'box-shadow 0.15s' },
+  inputBoxFocused: { boxShadow: '0 0 0 1.5px #c4c2bb, 0 2px 10px rgba(0,0,0,0.09)' },
+  textarea: { display: 'block', width: '100%', background: 'transparent', color: '#1a1a19', border: 'none', padding: '16px 16px 6px', fontSize: 15, fontFamily: 'system-ui, -apple-system, sans-serif', resize: 'none', outline: 'none', lineHeight: 1.6, minHeight: 52, maxHeight: 320, overflowY: 'auto' },
+  inputFooter: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px 10px 12px', borderTop: '1px solid #f0ede8' },
+  modelSelect: { background: 'transparent', color: '#5c5c54', border: '1px solid #e0deda', borderRadius: 8, padding: '4px 8px', fontSize: 12, cursor: 'pointer', maxWidth: 160, outline: 'none' },
+  modelBtn: { display: 'flex', alignItems: 'center', gap: 5, background: 'transparent', color: '#3a3a33', border: '1px solid #e0deda', borderRadius: 8, padding: '7px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' },
+  modelMenu: { position: 'absolute', bottom: 'calc(100% + 6px)', right: 0, background: '#ffffff', border: '1px solid #e0deda', borderRadius: 12, boxShadow: '0 -4px 20px rgba(0,0,0,0.12)', overflow: 'hidden', zIndex: 200, minWidth: 180 },
+  sendBtn: { width: 30, height: 30, borderRadius: 9, border: 'none', background: '#e8e6e0', color: '#9c9a94', fontSize: 16, cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.15s, color 0.15s', flexShrink: 0 },
   sendBtnActive: { background: '#1a1a19', color: '#ffffff', cursor: 'pointer' },
-  stopBtn: { width: 28, height: 28, borderRadius: 8, border: 'none', background: '#dc2626', color: '#ffffff', fontSize: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 },
+  stopBtn: { width: 30, height: 30, borderRadius: 9, border: 'none', background: '#1a1a19', color: '#ffffff', fontSize: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 },
   activeBadge: { fontSize: 11, color: '#92400e', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 12, padding: '2px 8px', fontWeight: 600, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   activeFileLabel: { fontSize: 11, color: '#d97706', fontWeight: 600, padding: '4px 6px', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   editBlock: { margin: '8px 0', border: '1px solid #d97706', borderRadius: 8, overflow: 'hidden' },
@@ -1004,7 +1252,7 @@ const styles = {
   editApplyBtn: { background: '#d97706', color: '#fff', border: 'none', borderRadius: 5, padding: '4px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer' },
   editApplied: { fontSize: 11, color: '#166534', fontWeight: 600 },
   editError: { fontSize: 11, color: '#dc2626', fontWeight: 600, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  editCode: { margin: 0, padding: '10px 12px', fontSize: 12, lineHeight: 1.5, background: '#fffbeb', color: '#1a1a19', overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 400, overflowY: 'auto' },
+  editCode: { margin: 0, padding: '10px 12px', fontSize: 12, lineHeight: 1.5, background: '#ffffff', color: '#1a1a19', overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 400, overflowY: 'auto' },
   dropupWrap: { position: 'relative' },
   dropupMenu: { position: 'absolute', bottom: '100%', right: 0, marginBottom: 8, width: 280, background: '#ffffff', border: '1px solid #e5e3dc', borderRadius: 10, boxShadow: '0 -4px 20px rgba(0,0,0,0.10)', overflow: 'hidden', zIndex: 100 },
   dropupHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px solid #e5e3dc', background: '#f3f2ee' },
@@ -1018,8 +1266,10 @@ const styles = {
   dropupError: { fontSize: 11, color: '#dc2626', fontWeight: 600, flexShrink: 0 },
   editsBtn: { width: 28, height: 28, borderRadius: 8, border: 'none', background: '#e5e3dc', color: '#8c8c84', fontSize: 12, cursor: 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600 },
   editsBtnActive: { background: '#fef3c7', color: '#d97706', border: '1px solid #fde68a', cursor: 'pointer' },
-  indexBadge: { fontSize: 10, color: '#1d4ed8', background: '#dbeafe', border: '1px solid #bfdbfe', borderRadius: 5, padding: '2px 6px', textAlign: 'center' },
-  indexBadgeLoading: { fontSize: 10, color: '#92400e', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 5, padding: '2px 6px', textAlign: 'center' },
-  paramBtn: { fontSize: 11, padding: '3px 10px', borderRadius: 6, border: '1px solid #e5e3dc', background: '#ffffff', color: '#5c5c54', cursor: 'pointer', fontWeight: 500 },
+  indexProgressWrap: { display: 'flex', flexDirection: 'column', gap: 2, justifyContent: 'center' },
+  indexProgressLabel: { fontSize: 10, color: '#5c5c54', fontWeight: 500, lineHeight: 1 },
+  indexProgressTrack: { width: 72, height: 4, background: '#e5e3dc', borderRadius: 2, overflow: 'hidden' },
+  indexProgressFill: { height: '100%', background: '#1a1a19', borderRadius: 2, transition: 'width 0.2s ease' },
+  paramBtn: { fontSize: 11, padding: '7px 12px', borderRadius: 6, border: '1px solid #e5e3dc', background: '#ffffff', color: '#5c5c54', cursor: 'pointer', fontWeight: 500 },
   paramBtnOn: { background: '#1a1a19', color: '#ffffff', border: '1px solid #1a1a19' },
 };

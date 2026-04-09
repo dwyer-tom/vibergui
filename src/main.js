@@ -222,7 +222,13 @@ const createWindow = () => {
   const win = new BrowserWindow({
     width: 1280,
     height: 900,
-    backgroundColor: '#0d0d0d',
+    backgroundColor: '#f3f2ee',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#f3f2ee',
+      symbolColor: '#1a1a19',
+      height: 40,
+    },
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
       contextIsolation: true,
