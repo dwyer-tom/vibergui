@@ -1209,7 +1209,7 @@ const styles = {
   fileList: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', marginTop: 4 },
   btn: { border: 'none', borderRadius: 6, padding: '6px 10px', cursor: 'pointer', fontSize: 12 },
   folderBtn: { display: 'flex', alignItems: 'center', gap: 6, background: '#1a1a19', color: '#ffffff', border: '1px solid #1a1a19', borderRadius: 8, padding: '6px 10px', fontSize: 12, fontWeight: 500, cursor: 'pointer', width: '100%' },
-  folderMenu: { position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0, background: '#ffffff', border: '1px solid #e0deda', borderRadius: 12, boxShadow: '0 -4px 20px rgba(0,0,0,0.12)', overflow: 'hidden', zIndex: 200, minWidth: 220 },
+  folderMenu: { position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, background: '#ffffff', border: '1px solid #e0deda', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.12)', overflow: 'hidden', zIndex: 200, minWidth: 220 },
   folderMenuSection: { fontSize: 11, fontWeight: 600, color: '#8c8c84', padding: '10px 14px 4px', letterSpacing: 0.3, textTransform: 'uppercase' },
   folderMenuItem: { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 14px', cursor: 'pointer', transition: 'background 0.1s' },
   folderMenuName: { fontSize: 13, fontWeight: 600, color: '#1a1a19', lineHeight: 1.3 },
