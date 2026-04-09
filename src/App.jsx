@@ -59,20 +59,24 @@ function useChat() {
     });
   }, []);
 
+  const toolCallsRef = useRef([]);
+
   const send = useCallback(async (userText, { model, files, activeFile, activeFileContent, relatedFiles = [], contextFiles = [], intent = 'chat', think = false }) => {
     if (streaming) return;
     setStreaming(true);
     streamBuf.current = '';
     thinkBuf.current = '';
+    toolCallsRef.current = [];
 
     const systemPrompts = {
       edit: [
         "You are a coding assistant with direct access to the user's codebase.",
         'Relevant files are provided in every message.',
+        'You also have tools: use list_files to discover files, read_file to read any file, run_bash to run commands.',
+        'If the file you need to edit is not in the context, call read_file first.',
         '',
         'RULES:',
-        '1. ONLY use the code you can see in the provided context. Never invent file names,',
-        '   component names, or structure not visible in the context.',
+        '1. ONLY use code you can see. Never invent file names or structure.',
         '2. Identify the ONE file to change and make the smallest possible edit.',
         '3. Output ONLY the edit block — no other text:',
         '',
@@ -93,27 +97,28 @@ function useChat() {
       search: [
         "You are a code navigation assistant with direct access to the user's codebase.",
         'Relevant files are provided in every message.',
+        'You also have tools: use list_files, read_file, or run_bash when you need more context.',
         '',
         'RULES:',
-        '1. ONLY reference files and code you can see in the provided context.',
-        '2. Answer with the exact file path(s) and line numbers where things are located.',
-        '3. Do NOT output edit blocks or suggest code changes.',
-        '4. When a button or UI element is mentioned, trace the full call chain:',
+        '1. Answer with exact file path(s) and line numbers.',
+        '2. Do NOT output edit blocks or suggest code changes.',
+        '3. When a button or UI element is mentioned, trace the full call chain:',
         '   - Where the JSX element is defined (file + line)',
         '   - The event handler function it calls (file + line)',
         '   - Any IPC channel it invokes (window.api.X → invoke → ipcMain.handle)',
         '   - What the main process handler does',
-        '5. Be concise but complete — file path, line number, and one-sentence explanation per step.',
+        '4. Be concise but complete — file path, line number, one-sentence explanation per step.',
       ].join('\n'),
 
       chat: [
         "You are a coding assistant with direct access to the user's codebase.",
         'Relevant files are provided in every message.',
+        'You also have tools: use list_files, read_file, or run_bash when you need more context.',
         '',
         'RULES:',
-        '1. ONLY use the code you can see in the provided context. Never invent anything.',
+        '1. Only use code you can see. Never invent anything.',
         '2. Answer questions concisely. Do NOT output edit blocks.',
-        '3. If a code change is implied, describe what to change in words rather than outputting an edit.',
+        '3. If a code change is implied, describe what to change in words.',
       ].join('\n'),
     };
 
@@ -162,12 +167,30 @@ function useChat() {
       }
       setMsgs((m) => {
         const copy = [...m];
-        copy[copy.length - 1] = { role: 'assistant', content: streamBuf.current, thinking: thinkBuf.current };
+        copy[copy.length - 1] = { role: 'assistant', content: streamBuf.current, thinking: thinkBuf.current, toolCalls: toolCallsRef.current };
         return copy;
       });
     });
 
-    window.api.onChatDone(() => setStreaming(false));
+    window.api.onChatTool((data) => {
+      toolCallsRef.current = [...toolCallsRef.current, data];
+      setMsgs((m) => {
+        const copy = [...m];
+        copy[copy.length - 1] = { ...copy[copy.length - 1], toolCalls: toolCallsRef.current };
+        return copy;
+      });
+    });
+
+    window.api.onChatDone((stats) => {
+      if (stats?.elapsedMs) {
+        setMsgs((m) => {
+          const copy = [...m];
+          copy[copy.length - 1] = { ...copy[copy.length - 1], stats };
+          return copy;
+        });
+      }
+      setStreaming(false);
+    });
 
     try {
       const historyMsgs = historyRef.current.map((m) => ({ role: m.role, content: m.content }));
@@ -379,6 +402,68 @@ function EditBlock({ edit }) {
   );
 }
 
+function toolLabel(tc) {
+  const arg = tc.args.path ?? tc.args.cmd ?? '';
+  const short = arg.replace(/\\/g, '/').split('/').slice(-2).join('/');
+  return tc.name === 'list_files' ? 'listing files'
+    : tc.name === 'read_file' ? short || 'file'
+    : tc.name === 'run_bash' ? (tc.args.cmd?.slice(0, 40) ?? 'command')
+    : tc.name;
+}
+
+function ToolSection({ summary, children }) {
+  const [exp, setExp] = useState(false);
+  return (
+    <div style={{ marginBottom: 2 }}>
+      <div style={styles.toolSummaryRow} onClick={() => setExp((o) => !o)}>
+        <span style={styles.toolSummaryLabel}>{summary}</span>
+        <span style={styles.toolSummaryHint}>{exp ? 'collapse' : 'expand'}</span>
+      </div>
+      {exp && <div style={styles.toolSummaryTree}>{children}</div>}
+    </div>
+  );
+}
+
+// Shown both during thinking and on completed messages
+function ToolCallBadges({ toolCalls }) {
+  if (!toolCalls || toolCalls.length === 0) return null;
+
+  const reads = toolCalls.filter((tc) => tc.name === 'read_file');
+  const lists = toolCalls.filter((tc) => tc.name === 'list_files');
+  const bashes = toolCalls.filter((tc) => tc.name === 'run_bash');
+
+  return (
+    <div style={styles.toolSummaryWrap}>
+      {reads.length > 0 && (
+        <ToolSection summary={`Reading ${reads.length} file${reads.length > 1 ? 's' : ''}…`}>
+          {reads.map((tc, i) => (
+            <div key={i} style={styles.toolSummaryFile}>
+              <span style={styles.toolSummaryConnector}>{i === reads.length - 1 ? '└' : '├'}</span>
+              <span>{(tc.args.path ?? '').replace(/\\/g, '/')}</span>
+            </div>
+          ))}
+        </ToolSection>
+      )}
+      {lists.length > 0 && (
+        <ToolSection summary="Listed project files…">
+          <div style={styles.toolSummaryFile}>
+            <span style={styles.toolSummaryConnector}>└</span>
+            <span>all source files</span>
+          </div>
+        </ToolSection>
+      )}
+      {bashes.map((tc, i) => (
+        <ToolSection key={i} summary={`Ran command…`}>
+          <div style={styles.toolSummaryFile}>
+            <span style={styles.toolSummaryConnector}>└</span>
+            <span>{tc.args.cmd}</span>
+          </div>
+        </ToolSection>
+      ))}
+    </div>
+  );
+}
+
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false);
   const doCopy = () => {
@@ -409,11 +494,14 @@ function Message({ msg, isThinking, model }) {
       {isThinking ? (
         <div style={styles.messageContent}>
           <div style={styles.thinkingRow}><Spinner /><span style={styles.thinkingModel}>{model}</span></div>
-          <em style={styles.thinkingText}>Thinking…</em>
+          {msg.toolCalls?.length > 0
+            ? <ToolCallBadges toolCalls={msg.toolCalls} />
+            : <em style={styles.thinkingText}>Thinking…</em>}
         </div>
       ) : parts && parts.some((p) => p.type === 'edit') ? (
         <div style={{ ...styles.messageContent, position: 'relative' }}>
           <CopyButton text={msg.content} />
+          <ToolCallBadges toolCalls={msg.toolCalls} />
           {msg.thinking && (
             <div>
               <div className="think-label" style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: '#a0a098', marginBottom: 4, cursor: 'pointer' }} onClick={() => setShowThink(s => !s)}>
@@ -427,24 +515,34 @@ function Message({ msg, isThinking, model }) {
           )}
         </div>
       ) : (
-        <div style={{ ...styles.messageContent, position: 'relative' }}>
-          {isUser ? (
-            <span style={styles.userText}>{msg.content}</span>
-          ) : (
-            <>
-              <CopyButton text={msg.content} />
-              {msg.thinking && (
-                <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: '#a0a098', marginBottom: 4, cursor: 'pointer' }} onClick={() => setShowThink(s => !s)}>
-                    ◈ REASONING {showThink ? '▴' : '▾'}
+        <>
+          <div style={{ ...styles.messageContent, position: 'relative' }}>
+            {isUser ? (
+              <span style={styles.userText}>{msg.content}</span>
+            ) : (
+              <>
+                <CopyButton text={msg.content} />
+                <ToolCallBadges toolCalls={msg.toolCalls} />
+                {msg.thinking && (
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: '#a0a098', marginBottom: 4, cursor: 'pointer' }} onClick={() => setShowThink(s => !s)}>
+                      ◈ REASONING {showThink ? '▴' : '▾'}
+                    </div>
+                    {showThink && <div className="think-block">{msg.thinking}</div>}
                   </div>
-                  {showThink && <div className="think-block">{msg.thinking}</div>}
-                </div>
-              )}
-              <MarkdownContent text={msg.content} />
-            </>
+                )}
+                <MarkdownContent text={msg.content} />
+              </>
+            )}
+          </div>
+          {!isUser && msg.stats && (
+            <div style={styles.msgStats}>
+              ※ {Math.round(msg.stats.elapsedMs / 1000)}s
+              {msg.stats.tokens > 0 && <> · ↓ {msg.stats.tokens} tokens</>}
+              {msg.stats.thinkMs > 0 && <> · thought for {Math.round(msg.stats.thinkMs / 1000)}s</>}
+            </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );
@@ -981,6 +1079,17 @@ const styles = {
   messageRole: { fontSize: 10, color: '#8c8c84', letterSpacing: 1 },
   messageContent: { background: '#ffffff', border: '1px solid #e5e3dc', borderRadius: 8, padding: '10px 14px', lineHeight: 1.6, fontSize: 13, color: '#1a1a19' },
   copyBtn: { position: 'absolute', top: 6, right: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#a0a098', fontSize: 13, padding: '2px 4px', borderRadius: 4, opacity: 0.6 },
+  toolReading: { fontSize: 12, color: '#6b7280', fontStyle: 'italic', animation: 'fadeIn 0.3s ease' },
+  toolDone: { fontSize: 11, color: '#9ca3af', fontFamily: 'var(--mono)' },
+  toolSummaryWrap: { marginBottom: 10 },
+  toolSummaryRow: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' },
+  toolSummaryLabel: { fontSize: 12, color: '#6b7280', fontStyle: 'italic' },
+  toolSummaryHint: { fontSize: 10, color: '#c0bdb8' },
+  toolSummaryTree: { marginTop: 3, paddingLeft: 4 },
+  toolSummaryFile: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#6b7280', fontFamily: 'var(--mono)', lineHeight: 1.8 },
+  toolSummaryConnector: { color: '#c0bdb8', userSelect: 'none' },
+  toolSummaryOther: { fontSize: 11, color: '#9ca3af', fontFamily: 'var(--mono)', marginTop: 2 },
+  msgStats: { fontSize: 11, color: '#a0a098', marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' },
   userText: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--mono)' },
   markdownBody: { fontFamily: 'system-ui, sans-serif', fontSize: 13, lineHeight: 1.7, color: '#1a1a19', wordBreak: 'break-word' },
   spinnerChar: { fontSize: 14, color: '#d97706', fontStyle: 'normal' },

@@ -129,6 +129,82 @@ ipcMain.handle('run-bash', async (_e, cmd, cwd) => {
 // Streams tokens back via webContents.send('chat-token', token)
 let activeOllama = null;
 
+// ── Agentic tool definitions (Ollama native tools API) ─────────────────────
+const AGENT_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'list_files',
+      description: 'List all source files in the project.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: 'Read the full contents of a file by its relative path.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative path to the file, e.g. src/main.js' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_bash',
+      description: 'Run a shell command in the project root and return stdout+stderr.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cmd: { type: 'string', description: 'The shell command to execute.' },
+        },
+        required: ['cmd'],
+      },
+    },
+  },
+];
+
+async function executeTool(name, args, folder) {
+  if (name === 'list_files') {
+    const IGNORE = new Set(['.git', 'node_modules', '.next', 'dist', 'build',
+      '__pycache__', '.venv', 'venv', '.webpack', '.cache', '.parcel-cache',
+      'out', 'coverage', '.codelocal-index.json', '.codelocal-meta.json']);
+    const results = [];
+    function walk(dir) {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (IGNORE.has(e.name)) continue;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else results.push(path.relative(folder, full).replace(/\\/g, '/'));
+      }
+    }
+    walk(folder);
+    return results.join('\n');
+  }
+  if (name === 'read_file') {
+    if (!args.path) return 'Error: path argument required';
+    const filePath = path.isAbsolute(args.path) ? args.path : path.join(folder, args.path);
+    try { return fs.readFileSync(filePath, 'utf8').slice(0, 20000); }
+    catch (e) { return `Error: ${e.message}`; }
+  }
+  if (name === 'run_bash') {
+    if (!args.cmd) return 'Error: cmd argument required';
+    return new Promise((resolve) => {
+      exec(args.cmd, { cwd: folder, timeout: 15000, maxBuffer: 512 * 1024 }, (err, stdout, stderr) => {
+        resolve(((stdout || '') + (stderr || '')).trim() || (err?.message ?? 'no output'));
+      });
+    });
+  }
+  return `Unknown tool: ${name}`;
+}
+
 ipcMain.handle('chat-abort', () => {
   if (activeOllama) { activeOllama.abort(); activeOllama = null; }
 });
@@ -136,25 +212,76 @@ ipcMain.handle('chat-abort', () => {
 ipcMain.handle('chat', async (event, { model, messages, think }) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   activeOllama = new Ollama();
+  const MAX_ROUNDS = 6;
+  let currentMessages = messages;
+  const startTime = Date.now();
+  let totalTokens = 0;
+  let thinkMs = 0;
+
   try {
-    const res = await activeOllama.chat({
-      model: model ?? 'llama3',
-      messages,
-      stream: true,
-      think: think ?? false,
-      options: { num_ctx: 32768 },
-    });
-    for await (const part of res) {
-      win.webContents.send('chat-token', {
-        text: part.message.content,
-        thinking: part.message.thinking ?? '',
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      let fullText = '';
+      let fullThinking = '';
+      let toolCalls = [];
+
+      const res = await activeOllama.chat({
+        model: model ?? 'llama3',
+        messages: currentMessages,
+        tools: AGENT_TOOLS,
+        stream: true,
+        think: think ?? false,
+        options: { num_ctx: 32768 },
       });
+
+      for await (const part of res) {
+        fullText += part.message.content ?? '';
+        fullThinking += part.message.thinking ?? '';
+        if (part.message.tool_calls?.length) {
+          toolCalls = part.message.tool_calls;
+        }
+        if (part.done) {
+          totalTokens += part.eval_count ?? 0;
+          thinkMs += part.thinking_duration ? Math.round(part.thinking_duration / 1e6) : 0;
+        }
+      }
+
+      if (toolCalls.length === 0 || round === MAX_ROUNDS - 1) {
+        // No tool calls (or hit limit) — send buffered response and stop
+        win.webContents.send('chat-token', { text: fullText, thinking: fullThinking });
+        break;
+      }
+
+      // Emit any prose the model wrote before the tool calls
+      if (fullText.trim()) {
+        win.webContents.send('chat-token', { text: fullText + '\n', thinking: fullThinking });
+      }
+
+      // Execute each tool call; notify renderer so it can show badges
+      const toolResultMessages = [];
+      for (const tc of toolCalls) {
+        const name = tc.function.name;
+        const args = tc.function.arguments ?? {};
+        win.webContents.send('chat-tool', { name, args });
+        const result = await executeTool(name, args, currentFolder);
+        toolResultMessages.push({ role: 'tool', content: result });
+      }
+
+      // Append assistant turn + tool results for next model round
+      currentMessages = [
+        ...currentMessages,
+        { role: 'assistant', content: fullText, tool_calls: toolCalls },
+        ...toolResultMessages,
+      ];
     }
   } catch (err) {
     if (err?.name !== 'AbortError') throw err;
   } finally {
     activeOllama = null;
-    win.webContents.send('chat-done', {});
+    win.webContents.send('chat-done', {
+      elapsedMs: Date.now() - startTime,
+      tokens: totalTokens,
+      thinkMs,
+    });
   }
 });
 
