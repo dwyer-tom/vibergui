@@ -379,6 +379,21 @@ function EditBlock({ edit }) {
   );
 }
 
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const doCopy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+  return (
+    <button onClick={doCopy} style={styles.copyBtn} title="Copy to clipboard">
+      {copied ? '✓' : '⎘'}
+    </button>
+  );
+}
+
 function Message({ msg, isThinking, model }) {
   const isUser = msg.role === 'user';
   // Memoised: parseEditBlocks runs heavy regex — only recompute when content changes
@@ -397,7 +412,8 @@ function Message({ msg, isThinking, model }) {
           <em style={styles.thinkingText}>Thinking…</em>
         </div>
       ) : parts && parts.some((p) => p.type === 'edit') ? (
-        <div style={styles.messageContent}>
+        <div style={{ ...styles.messageContent, position: 'relative' }}>
+          <CopyButton text={msg.content} />
           {msg.thinking && (
             <div>
               <div className="think-label" style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: '#a0a098', marginBottom: 4, cursor: 'pointer' }} onClick={() => setShowThink(s => !s)}>
@@ -411,11 +427,12 @@ function Message({ msg, isThinking, model }) {
           )}
         </div>
       ) : (
-        <div style={styles.messageContent}>
+        <div style={{ ...styles.messageContent, position: 'relative' }}>
           {isUser ? (
             <span style={styles.userText}>{msg.content}</span>
           ) : (
             <>
+              <CopyButton text={msg.content} />
               {msg.thinking && (
                 <div>
                   <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: '#a0a098', marginBottom: 4, cursor: 'pointer' }} onClick={() => setShowThink(s => !s)}>
@@ -963,6 +980,7 @@ const styles = {
   messageAssistant: { alignSelf: 'flex-start', alignItems: 'flex-start' },
   messageRole: { fontSize: 10, color: '#8c8c84', letterSpacing: 1 },
   messageContent: { background: '#ffffff', border: '1px solid #e5e3dc', borderRadius: 8, padding: '10px 14px', lineHeight: 1.6, fontSize: 13, color: '#1a1a19' },
+  copyBtn: { position: 'absolute', top: 6, right: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#a0a098', fontSize: 13, padding: '2px 4px', borderRadius: 4, opacity: 0.6 },
   userText: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--mono)' },
   markdownBody: { fontFamily: 'system-ui, sans-serif', fontSize: 13, lineHeight: 1.7, color: '#1a1a19', wordBreak: 'break-word' },
   spinnerChar: { fontSize: 14, color: '#d97706', fontStyle: 'normal' },
