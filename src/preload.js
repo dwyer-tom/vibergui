@@ -28,9 +28,13 @@ contextBridge.exposeInMainWorld('api', {
   onChatDone: (cb) => {
     ipcRenderer.on('chat-done', (_e, msg) => cb(msg));
   },
+  onChatTool: (cb) => {
+    ipcRenderer.on('chat-tool', (_e, data) => cb(data));
+  },
   offChatListeners: () => {
     ipcRenderer.removeAllListeners('chat-token');
     ipcRenderer.removeAllListeners('chat-done');
+    ipcRenderer.removeAllListeners('chat-tool');
   },
 
   onIndexingProgress: (cb) => {
