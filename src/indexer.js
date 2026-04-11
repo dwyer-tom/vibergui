@@ -308,20 +308,25 @@ async function buildIndex(folderPath, model, onProgress) {
  * Returns { ok, results, filesMeta } or { ok: false, error }.
  * filesMeta is the structural metadata for the matched files only.
  */
-async function searchIndex(folderPath, query, model, topK = 5) {
+async function searchIndex(folderPath, query, model, topK = 5, log) {
+  const _log = log || (() => {});
+  const t0 = Date.now();
   const indexPath = path.join(folderPath, INDEX_FILE);
   if (!fs.existsSync(indexPath)) {
+    _log('[search] no index file found');
     return { ok: false, error: 'No index found. Click "Index folder" first.' };
   }
 
   let index;
   try {
-    if (_indexCache?.path === indexPath) {
+    const cached = _indexCache?.path === indexPath;
+    if (cached) {
       index = _indexCache.data;
     } else {
       index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
       _indexCache = { path: indexPath, data: index };
     }
+    _log(`[search] index loaded (${cached ? 'cache' : 'disk'}): ${index.chunks.length} chunks, ${new Set(index.chunks.map(c => c.path)).size} files`);
   } catch {
     return { ok: false, error: 'Index file is corrupt. Re-index the folder.' };
   }
@@ -334,15 +339,20 @@ async function searchIndex(folderPath, query, model, topK = 5) {
   } catch { /* non-fatal */ }
 
   let queryEmbedding = cacheGet(model, query);
+  const embedCached = !!queryEmbedding;
   if (!queryEmbedding) {
     try {
       const ollama = new Ollama();
+      const eStart = Date.now();
       const res    = await ollama.embeddings({ model, prompt: query });
       queryEmbedding = res.embedding;
       cacheSet(model, query, queryEmbedding);
+      _log(`[search] query embedded in ${Date.now() - eStart}ms (dim=${queryEmbedding.length})`);
     } catch (err) {
       return { ok: false, error: `Embedding query failed: ${err.message}` };
     }
+  } else {
+    _log(`[search] query embedding cache hit`);
   }
 
   const scored = index.chunks.map((chunk, i) => ({
@@ -356,6 +366,15 @@ async function searchIndex(folderPath, query, model, topK = 5) {
   const reranked = rerank(scored, query, filesMeta);
   reranked.sort((a, b) => b.score - a.score);
   const results = reranked.slice(0, topK);
+
+  // Log all scored results (top 15 for visibility)
+  const top15 = reranked.slice(0, 15);
+  for (const r of top15) {
+    const rel = path.relative(folderPath, r.path);
+    const marker = results.includes(r) ? '★' : ' ';
+    _log(`[search] ${marker} ${r.score.toFixed(4)} ${rel}:${r.startLine}-${r.endLine}`);
+  }
+  _log(`[search] done in ${Date.now() - t0}ms — returned top ${results.length}/${reranked.length} chunks`);
 
   // Return metadata only for matched files (keeps IPC payload small)
   const matchedMeta = {};

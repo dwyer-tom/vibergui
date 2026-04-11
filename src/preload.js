@@ -5,19 +5,14 @@ contextBridge.exposeInMainWorld('api', {
   readFile:     (p)             => ipcRenderer.invoke('read-file', p),
   writeFile:    (p, c)          => ipcRenderer.invoke('write-file', p, c),
   applyEdit:    (p, hunks)      => ipcRenderer.invoke('apply-edit', p, hunks),
-  sliceFile:    (p, chunks)     => ipcRenderer.invoke('slice-file', p, chunks),
-  findSymbols:  (queries)       => ipcRenderer.invoke('find-symbols', queries),
   listFiles:    (p)             => ipcRenderer.invoke('list-files', p),
+  indexFolder:  (folder, model) => ipcRenderer.invoke('index-folder', { folderPath: folder, model }),
+  indexStatus:  (folder)        => ipcRenderer.invoke('index-status', folder),
   runBash:      (cmd, cwd)      => ipcRenderer.invoke('run-bash', cmd, cwd),
   chat:         (opts)          => ipcRenderer.invoke('chat', opts),
   abortChat:    ()              => ipcRenderer.invoke('chat-abort'),
   ollamaModels: ()              => ipcRenderer.invoke('ollama-models'),
 
-  // RAG indexing
-  indexStatus:  (folder)                       => ipcRenderer.invoke('index-status', folder),
-  getFileMeta:  (folder)                       => ipcRenderer.invoke('get-file-meta', folder),
-  indexFolder:  (folder, model)                => ipcRenderer.invoke('index-folder', { folderPath: folder, model }),
-  searchIndex:  (folder, query, model, topK)   => ipcRenderer.invoke('search-index', { folderPath: folder, query, model, topK }),
   watchFolder:  (folder)                       => ipcRenderer.invoke('watch-folder', folder),
   onFolderChanged: (cb) => ipcRenderer.on('folder-changed', () => cb()),
   offFolderChanged: () => ipcRenderer.removeAllListeners('folder-changed'),
@@ -31,12 +26,15 @@ contextBridge.exposeInMainWorld('api', {
   offChatListeners: () => {
     ipcRenderer.removeAllListeners('chat-token');
     ipcRenderer.removeAllListeners('chat-done');
+    ipcRenderer.removeAllListeners('chat-tool-call');
+    ipcRenderer.removeAllListeners('chat-tool-result');
   },
+  onToolCall:   (cb) => ipcRenderer.on('chat-tool-call',   (_e, d) => cb(d)),
+  onToolResult: (cb) => ipcRenderer.on('chat-tool-result', (_e, d) => cb(d)),
 
-  onIndexingProgress: (cb) => {
-    ipcRenderer.on('indexing-progress', (_e, data) => cb(data));
-  },
-  offIndexingListeners: () => {
-    ipcRenderer.removeAllListeners('indexing-progress');
-  },
+  onIndexingProgress: (cb) => ipcRenderer.on('indexing-progress', (_e, d) => cb(d)),
+  offIndexingListeners: () => ipcRenderer.removeAllListeners('indexing-progress'),
+
+  onDebugLog: (cb) => ipcRenderer.on('debug-log', (_e, d) => cb(d)),
+  offDebugLog: () => ipcRenderer.removeAllListeners('debug-log'),
 });
