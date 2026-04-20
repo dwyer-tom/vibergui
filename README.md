@@ -1,7 +1,5 @@
 # viber
 
-> total vibe coded nonsense, works rlly well with gemma
-
 A local AI coding assistant built on Electron + Ollama. Point it at a folder, pick a model, and chat with your codebase — reads files, writes edits, runs searches, all on your machine with no cloud.
 
 ![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron) ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react) ![Ollama](https://img.shields.io/badge/Ollama-local-black) ![License](https://img.shields.io/badge/license-MIT-green)
