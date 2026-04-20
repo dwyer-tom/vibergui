@@ -3,13 +3,40 @@ import { useChat } from './hooks/useChat';
 import { parseEditBlocks } from './lib/parseEditBlocks';
 import { TitleBar } from './components/TitleBar';
 import Sidebar from './components/Sidebar';
+import Terminal from './components/Terminal';
+import Settings, { loadModelOpts, loadOllamaUrl } from './components/Settings';
 import ChatInput from './components/ChatInput';
 import Message from './components/Message';
 import DiffPanel from './components/DiffPanel';
+import CommandPalette from './components/CommandPalette';
+import Library from './components/Library';
 import styles from './styles';
+
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const getPrompt = () => {
+  const h = new Date().getHours();
+  if (h >= 22 || h < 5) return pick(['burning the midnight oil?', 'still up?', 'late night session?']);
+  if (h < 12)           return pick(['what are we shipping today?', 'morning grind?', 'coffee and code?']);
+  if (h < 18)           return pick(['what are we building?', 'deep in it?', 'making progress?']);
+  return pick(['still hacking?', 'evening session?', 'one more feature?']);
+};
+
+const LANDING_CHIPS = [
+  { label: 'Explain this folder', prefill: 'Give me a tour of this codebase.' },
+  { label: 'Find bugs',           prefill: 'Scan for likely bugs or smells.' },
+  { label: 'Write tests',         prefill: 'Write tests for the most important untested code.' },
+  { label: 'Refactor',            prefill: 'Suggest refactors that would most improve readability.' },
+];
 
 export default function App() {
   const [folder, setFolder] = useState(() => localStorage.getItem('codelocal-folder') || null);
+  const [activeProjectId, setActiveProjectIdState] = useState(() => {
+    const raw = localStorage.getItem('codelocal-active-project');
+    if (!raw || raw === 'null') return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  });
+  const [projects, setProjects] = useState([]);
   const [recentFolders, setRecentFolders] = useState(() => {
     try { return JSON.parse(localStorage.getItem('codelocal-recent') || '[]'); } catch { return []; }
   });
@@ -18,10 +45,31 @@ export default function App() {
   const [ollamaModels, setOllamaModels] = useState([]);
   const [activeFile, setActiveFile] = useState(null);
   const [planMode, setPlanMode] = useState(false);
+  const [chatMode, setChatModeState] = useState(() => localStorage.getItem('codelocal-mode') || 'code');
+  const setChatMode = useCallback((m) => {
+    setChatModeState(m);
+    localStorage.setItem('codelocal-mode', m);
+    setLibraryOpen(false);
+  }, []);
   const [activeDiff, setActiveDiff] = useState(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteSessions, setPaletteSessions] = useState([]);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [indexing, setIndexing] = useState(null); // null | { done, total }
-  const { messages, streaming, send, stop, reset } = useChat();
+  const [prefill, setPrefill] = useState('');
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [gitInfo, setGitInfo] = useState(null);
+  const { messages, streaming, send, stop, reset, sessionId, loadSession } = useChat();
   const [autoApply, setAutoApply] = useState(() => localStorage.getItem('codelocal-autoapply') === 'true');
+  const [webSearch, setWebSearchState] = useState(() => localStorage.getItem('codelocal-websearch') === 'true');
+  const setWebSearch = useCallback((v) => {
+    setWebSearchState((prev) => {
+      const next = typeof v === 'function' ? v(prev) : v;
+      localStorage.setItem('codelocal-websearch', String(next));
+      return next;
+    });
+  }, []);
   const bottomRef = useRef(null);
   const messagesRef = useRef(null);
   const userScrolled = useRef(false);
@@ -37,6 +85,27 @@ export default function App() {
   useEffect(() => {
     if (!streaming) userScrolled.current = false;
   }, [streaming]);
+
+  // Ctrl/Cmd+K opens command palette
+  useEffect(() => {
+    const h = (e) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, []);
+
+  // Load sessions for command palette when it opens
+  useEffect(() => {
+    if (!paletteOpen) return;
+    (async () => {
+      const res = await window.api.history.list({});
+      if (res?.ok) setPaletteSessions(res.sessions);
+    })();
+  }, [paletteOpen, sessionId]);
 
   // Ctrl+Shift+A toggles auto-apply
   useEffect(() => {
@@ -56,7 +125,7 @@ export default function App() {
 
   // Auto-apply edits when streaming finishes
   useEffect(() => {
-    if (streaming || !autoApply || messages.length === 0) return;
+    if (streaming || !autoApply || messages.length === 0 || chatMode === 'chat') return;
     const last = messages[messages.length - 1];
     if (last.role !== 'assistant' || !last.content) return;
     // Use message index as identity to avoid re-applying
@@ -96,13 +165,13 @@ export default function App() {
           }
           const lineInfo = edit.startLine != null ? ` (lines ${edit.startLine}-${edit.endLine})` : '';
           const retryMsg = `Auto-apply failed for ${edit.path}${lineInfo}: ${res.error}\n\nPlease use read_file to check the current file content, then fix the edit with correct line numbers.`;
-          send(retryMsg, { model, activeFile: null, activeFileContent: null, intent: 'agent', think: true, hidden: true });
+          send(retryMsg, { model, activeFile: null, activeFileContent: null, intent: 'agent', think: true, hidden: true, folder, projectId: activeProjectId });
           return;
         }
         retryCountRef.current = 0; // reset on success
       }
     })();
-  }, [streaming, messages, autoApply]);
+  }, [streaming, messages, autoApply, chatMode]);
 
   const handleMessagesScroll = useCallback(() => {
     const el = messagesRef.current;
@@ -117,6 +186,34 @@ export default function App() {
       if (models.length) setModel(models[0]);
     });
   }, []);
+
+  const refreshProjects = useCallback(async () => {
+    const res = await window.api.projects.list();
+    if (res?.ok) setProjects(res.projects);
+  }, []);
+
+  useEffect(() => { refreshProjects(); }, [refreshProjects]);
+
+  const setActiveProjectId = useCallback((id) => {
+    setActiveProjectIdState(id);
+    localStorage.setItem('codelocal-active-project', id == null ? 'null' : String(id));
+    // Bind project folder into workspace folder if project has one
+    if (id != null) {
+      const p = projects.find((x) => x.id === id);
+      if (p?.folder && p.folder !== folder) {
+        applyFolder(p.folder);
+      }
+    }
+  }, [projects, folder]);
+
+  // Git info — fetch on folder change, poll every 5s
+  useEffect(() => {
+    if (!folder) { setGitInfo(null); return; }
+    const refresh = () => window.api.gitInfo(folder).then(info => setGitInfo(info?.ok ? info : null));
+    refresh();
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id);
+  }, [folder]);
 
   // Restore folder on startup — load file list for sidebar only
   useEffect(() => {
@@ -171,7 +268,12 @@ export default function App() {
 
   const pickFolder = async () => {
     const f = await window.api.pickFolder();
-    if (f) applyFolder(f);
+    if (!f) return;
+    applyFolder(f);
+    if (activeProjectId != null) {
+      await window.api.projects.setFolder(activeProjectId, f);
+      refreshProjects();
+    }
   };
 
   const startWatching = (f) => {
@@ -196,6 +298,12 @@ export default function App() {
       intent: isGo ? 'go' : 'agent',
       think: true,
       planMode: isGo ? false : planMode,
+      chatMode,
+      webSearch,
+      folder,
+      projectId: activeProjectId,
+      modelOptions: loadModelOpts(),
+      ollamaUrl: loadOllamaUrl(),
     });
   };
 
@@ -216,6 +324,10 @@ export default function App() {
       intent: 'go',
       think: true,
       planMode: false,
+      folder,
+      projectId: activeProjectId,
+      modelOptions: loadModelOpts(),
+      ollamaUrl: loadOllamaUrl(),
     });
   };
 
@@ -227,71 +339,117 @@ export default function App() {
 
   return (
     <div style={styles.shell}>
-      <TitleBar folder={folder} onPickFolder={pickFolder} onNewChat={handleNewChat} indexing={indexing} />
+      <TitleBar folder={folder} onPickFolder={pickFolder} onNewChat={handleNewChat} indexing={indexing} chatMode={chatMode} setChatMode={setChatMode} gitInfo={gitInfo} />
       <div style={styles.titleBarBorder} />
       <div style={styles.root}>
         <Sidebar
           onNewChat={handleNewChat}
           onPickFolder={pickFolder}
-          messages={messages}
+          onOpenCommandPalette={() => setPaletteOpen(true)}
+          onOpenLibrary={() => setLibraryOpen(true)}
+          libraryOpen={libraryOpen}
+          terminalOpen={terminalOpen}
+          onToggleTerminal={() => setTerminalOpen(o => !o)}
+          settingsOpen={settingsOpen}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
 
         <div style={styles.main}>
-          <div ref={messagesRef} style={styles.messages} onScroll={handleMessagesScroll}>
-            {messages.length === 0 && (
-              <div style={styles.empty}>
-                <svg width="100%" viewBox="0 0 680 500" role="img" style={{ maxWidth: 340, marginBottom: 16, opacity: 0.7 }}>
-                  <title>Cartoon dog sitting at a computer</title>
-                  <style>{`.line{fill:none;stroke:#b8b4ac;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.body{fill:#ede9e2;stroke:#b8b4ac;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.ear{fill:#e0dcd4;stroke:#b8b4ac;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.screen{fill:#e8e5df;stroke:#b8b4ac;stroke-width:1.5}.desk{fill:#e8e4dc;stroke:#b8b4ac;stroke-width:1.5;stroke-linecap:round}.chair{fill:#dedad2;stroke:#b8b4ac;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}`}</style>
-                  <rect x="220" y="80" width="240" height="160" rx="10" className="body"/><rect x="234" y="93" width="212" height="132" rx="5" className="screen"/>
-                  <line x1="252" y1="114" x2="360" y2="114" className="line" strokeWidth="1" stroke="#c8c4bc"/><line x1="252" y1="128" x2="400" y2="128" className="line" strokeWidth="1" stroke="#c8c4bc"/><line x1="252" y1="142" x2="376" y2="142" className="line" strokeWidth="1" stroke="#c8c4bc"/><line x1="252" y1="156" x2="394" y2="156" className="line" strokeWidth="1" stroke="#c8c4bc"/><line x1="252" y1="170" x2="352" y2="170" className="line" strokeWidth="1" stroke="#c8c4bc"/><line x1="252" y1="184" x2="386" y2="184" className="line" strokeWidth="1" stroke="#c8c4bc"/>
-                  <rect x="354" y="179" width="6" height="10" rx="1" fill="#b8b4ac" opacity="0.6"/><rect x="325" y="240" width="30" height="36" rx="2" className="body"/><rect x="298" y="272" width="84" height="10" rx="4" className="body"/>
-                  <rect x="150" y="282" width="380" height="16" rx="4" className="desk"/><rect x="248" y="285" width="184" height="18" rx="4" className="body"/>
-                  <line x1="260" y1="291" x2="420" y2="291" className="line" strokeWidth="0.8" stroke="#c8c4bc"/><line x1="260" y1="297" x2="420" y2="297" className="line" strokeWidth="0.8" stroke="#c8c4bc"/>
-                  <rect x="178" y="298" width="12" height="110" rx="3" className="desk"/><rect x="490" y="298" width="12" height="110" rx="3" className="desk"/>
-                  <rect x="296" y="318" width="88" height="10" rx="4" className="chair"/><rect x="300" y="326" width="8" height="60" rx="3" className="chair"/><rect x="372" y="326" width="8" height="60" rx="3" className="chair"/><rect x="276" y="384" width="128" height="18" rx="6" className="chair"/><rect x="332" y="400" width="16" height="30" rx="3" className="chair"/>
-                  <line x1="340" y1="428" x2="290" y2="448" className="line" strokeWidth="2"/><line x1="340" y1="428" x2="390" y2="448" className="line" strokeWidth="2"/><line x1="340" y1="428" x2="340" y2="452" className="line" strokeWidth="2"/>
-                  <circle cx="290" cy="450" r="5" className="chair"/><circle cx="390" cy="450" r="5" className="chair"/><circle cx="340" cy="454" r="5" className="chair"/>
-                  <path d="M400 370 Q448 350 458 318 Q466 292 448 278 Q438 270 430 280 Q442 290 436 312 Q428 334 386 352" className="body" strokeWidth="2.2"/>
-                  <ellipse cx="340" cy="375" rx="62" ry="30" className="body"/><ellipse cx="340" cy="338" rx="52" ry="36" className="body"/>
-                  <path d="M294 345 Q268 350 256 336 Q250 328 256 322 Q264 318 268 328 Q276 338 298 336" className="body"/><ellipse cx="254" cy="322" rx="13" ry="9" className="body"/>
-                  <line x1="248" y1="316" x2="244" y2="312" className="line" strokeWidth="1.2"/><line x1="254" y1="314" x2="252" y2="309" className="line" strokeWidth="1.2"/><line x1="260" y1="315" x2="260" y2="310" className="line" strokeWidth="1.2"/>
-                  <path d="M386 345 Q412 350 424 336 Q430 328 424 322 Q416 318 412 328 Q404 338 382 336" className="body"/><ellipse cx="426" cy="322" rx="13" ry="9" className="body"/>
-                  <line x1="420" y1="316" x2="416" y2="312" className="line" strokeWidth="1.2"/><line x1="426" y1="314" x2="426" y2="309" className="line" strokeWidth="1.2"/><line x1="432" y1="315" x2="436" y2="310" className="line" strokeWidth="1.2"/>
-                  <path d="M316 304 Q340 296 364 304 L360 322 Q340 316 320 322 Z" className="body"/>
-                  <ellipse cx="340" cy="282" rx="52" ry="48" className="body"/>
-                  <path d="M292 268 Q268 256 260 276 Q252 298 258 318 Q264 334 278 330 Q290 326 294 308 Q298 290 296 272" className="ear"/><path d="M388 268 Q412 256 420 276 Q428 298 422 318 Q416 334 402 330 Q390 326 386 308 Q382 290 384 272" className="ear"/>
-                  <path d="M322 238 Q330 228 340 234 Q350 228 358 238" className="line" strokeWidth="1.4"/>
-                  <path d="M300 316 Q340 308 380 316" className="line" strokeWidth="3"/><circle cx="340" cy="320" r="5" className="body" strokeWidth="1.5"/>
-                </svg>
-                Open a folder and ask anything about your codebase.<br />
-                Select a file only if you want to edit it.
+          {settingsOpen ? (
+            <Settings onClose={() => setSettingsOpen(false)} />
+          ) : libraryOpen ? (
+            <Library
+              onLoadSession={loadSession}
+              onNewChat={handleNewChat}
+              onClose={() => setLibraryOpen(false)}
+              currentSessionId={sessionId}
+              activeProjectId={activeProjectId}
+              onSetActiveProject={setActiveProjectId}
+              projects={projects}
+              onProjectsChanged={refreshProjects}
+              onOpenCommandPalette={() => setPaletteOpen(true)}
+              folderName={folder ? folder.split(/[\\/]/).pop() : null}
+            />
+          ) : messages.length === 0 ? (
+            <div style={styles.landing}>
+              <div style={styles.landingHeader}>
+                <div style={styles.landingKicker}>
+                  ~ codelocal // {folder ? folder.split(/[\\/]/).pop() : 'no folder'}
+                </div>
+                <div style={styles.landingGreeting}>
+                  <span style={styles.landingCaret}>›</span>
+                  hey {window.api.osUser}, {getPrompt()}
+                </div>
               </div>
-            )}
-            {messages.map((m, i) => (
-              <Message
-                key={i} msg={m}
-                isThinking={streaming && m.role === 'assistant' && m.content === '' && i === messages.length - 1}
-                isStreaming={streaming && m.role === 'assistant' && i === messages.length - 1}
-                showCopy={!streaming || i < messages.length - 1}
-                onAcceptPlan={!streaming ? handleAcceptPlan : undefined}
-                onDeclinePlan={!streaming ? handleDeclinePlan : undefined}
-              />
-            ))}
-            <div ref={bottomRef} />
-          </div>
+              <div style={styles.landingInputWrap}>
+                <ChatInput
+                  onSend={handleSend} onStop={stop} streaming={streaming}
+                  model={model} ollamaModels={ollamaModels} setModel={setModel}
+                  folder={folder} recentFolders={recentFolders} onPickFolder={pickFolder} onSelectFolder={applyFolder}
+                  planMode={planMode} setPlanMode={setPlanMode}
+                  autoApply={autoApply} setAutoApply={setAutoApply}
+                  chatMode={chatMode} webSearch={webSearch} setWebSearch={setWebSearch}
+                  indexing={indexing}
+                  prefillText={prefill}
+                />
+              </div>
+              <div style={styles.landingChips}>
+                {chatMode !== 'chat' && LANDING_CHIPS.map((c) => (
+                  <button
+                    key={c.label}
+                    style={{ ...styles.landingChip, ...(folder ? null : styles.landingChipDisabled) }}
+                    disabled={!folder}
+                    onClick={() => setPrefill(c.prefill + '\u200b'.repeat(((prefill.match(/\u200b/g) || []).length) + 1))}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div ref={messagesRef} style={styles.messages} onScroll={handleMessagesScroll}>
+                {messages.map((m, i) => (
+                  <Message
+                    key={i} msg={m}
+                    isThinking={streaming && m.role === 'assistant' && m.content === '' && i === messages.length - 1}
+                    isStreaming={streaming && m.role === 'assistant' && i === messages.length - 1}
+                    showCopy={!streaming || i < messages.length - 1}
+                    onAcceptPlan={!streaming ? handleAcceptPlan : undefined}
+                    onDeclinePlan={!streaming ? handleDeclinePlan : undefined}
+                  />
+                ))}
+                <div ref={bottomRef} />
+              </div>
 
-          <ChatInput
-            onSend={handleSend} onStop={stop} streaming={streaming}
-            model={model} ollamaModels={ollamaModels} setModel={setModel}
-            folder={folder} recentFolders={recentFolders} onPickFolder={pickFolder} onSelectFolder={applyFolder}
-            planMode={planMode} setPlanMode={setPlanMode}
-            autoApply={autoApply} setAutoApply={setAutoApply}
-            indexing={indexing}
-          />
+              <ChatInput
+                onSend={handleSend} onStop={stop} streaming={streaming}
+                model={model} ollamaModels={ollamaModels} setModel={setModel}
+                folder={folder} recentFolders={recentFolders} onPickFolder={pickFolder} onSelectFolder={applyFolder}
+                planMode={planMode} setPlanMode={setPlanMode}
+                autoApply={autoApply} setAutoApply={setAutoApply}
+                chatMode={chatMode} webSearch={webSearch} setWebSearch={setWebSearch}
+                indexing={indexing}
+              />
+            </>
+          )}
+          {terminalOpen && (
+            <Terminal folder={folder} onClose={() => setTerminalOpen(false)} />
+          )}
         </div>
       </div>
       {activeDiff && <DiffPanel edit={activeDiff} onClose={() => setActiveDiff(null)} />}
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        sessions={paletteSessions}
+        projects={projects}
+        currentSessionId={sessionId}
+        activeProjectId={activeProjectId}
+        onLoadSession={loadSession}
+        onNewChat={handleNewChat}
+        onSetActiveProject={setActiveProjectId}
+      />
     </div>
   );
 }

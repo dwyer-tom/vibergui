@@ -40,7 +40,9 @@ function ThinkingBlock({ text, live }) {
   return (
     <div ref={ref} style={{
       marginTop: 6, maxHeight: 150, overflowY: 'auto',
-      borderLeft: '2px solid #e0ddd6', paddingLeft: 12,
+      borderLeft: '2px solid #c8c4bc',
+      background: '#fafaf8', borderRadius: '0 4px 4px 0',
+      paddingLeft: 12, paddingTop: 6, paddingBottom: 6,
       fontSize: 12, color: '#8c8c84', lineHeight: 1.55,
       whiteSpace: 'pre-wrap', wordBreak: 'break-word',
     }}>
@@ -127,14 +129,19 @@ export function EditBlock({ edit }) {
   return (
     <div style={{ margin: '8px 0', fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace', fontSize: 12, lineHeight: 1.65 }}>
       {/* Header */}
-      <div style={{ marginBottom: 2 }}>
-        <span style={{ fontWeight: 700, color: '#3a3a33' }}>
-          <span style={{ color: '#8c8c84', marginRight: 6 }}>●</span>
-          Update({edit.path.replace(/\//g, '\\')})
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: '#f3f2ee', border: '1px solid #e5e3dc', borderRadius: 6, padding: '3px 9px' }}>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+            <path d="M3 2h7l3 3v9H3V2z" fill="#d97706" fillOpacity="0.15" stroke="#d97706" strokeWidth="1.2"/>
+            <path d="M10 2v3h3" fill="none" stroke="#d97706" strokeWidth="1.2"/>
+          </svg>
+          <span style={{ fontSize: 12, fontWeight: 600, color: '#3a3a33' }}>{fileName}</span>
+        </div>
+        <span style={{ fontSize: 11, color: '#8c8c84' }}>
+          <span style={{ color: '#2d8a2d', fontWeight: 500 }}>+{addedCount}</span>
+          <span style={{ margin: '0 3px' }}>/</span>
+          <span style={{ color: '#b03030', fontWeight: 500 }}>−{removedCount}</span>
         </span>
-      </div>
-      <div style={{ color: '#8c8c84', fontSize: 11, marginBottom: 4, paddingLeft: 14 }}>
-        └ Added {addedCount} line{addedCount !== 1 ? 's' : ''}, removed {removedCount} line{removedCount !== 1 ? 's' : ''}
       </div>
 
       {/* Diff lines */}
@@ -197,15 +204,19 @@ function ToolCallsSection({ toolCalls }) {
 
         return (
           <div key={name}>
-            <div style={{ color: '#8c8c84', cursor: 'pointer', userSelect: 'none' }} onClick={() => setOpen(o => !o)}>
-              {label}{running ? '…' : ''} <span style={{ fontSize: 11 }}>(ctrl+o to expand)</span>
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#8c8c84', cursor: 'pointer', userSelect: 'none' }}
+              onClick={() => setOpen(o => !o)}
+            >
+              <span>{label}{running ? '…' : ''}</span>
+              <span style={{ fontSize: 10, opacity: 0.6 }}>{open ? '▴' : '▾'}</span>
             </div>
             {open && calls.map((tc, i) => {
               const file = tc.args?.path || tc.args?.query || tc.args?.command || '';
               const short = file.split(/[\\/]/).pop() || file;
               return (
-                <div key={i} style={{ color: '#8c8c84', paddingLeft: 2 }}>
-                  └ <span style={{ color: '#cc4444' }}>{short}</span>
+                <div key={i} style={{ color: '#8c8c84', paddingLeft: 10, fontSize: 11 }}>
+                  └ <span style={{ color: '#6b6960' }}>{short}</span>
                 </div>
               );
             })}
@@ -278,7 +289,6 @@ export default function Message({ msg, isThinking, isStreaming, showCopy, onAcce
 
   return (
     <div style={{ ...styles.message, ...(isUser ? styles.messageUser : styles.messageAssistant) }}>
-      {isUser && <span style={styles.messageRole}>you</span>}
       {isActive ? (
         <>
           {msg.toolCalls?.length > 0 && <ToolCallsSection toolCalls={msg.toolCalls} />}
@@ -301,9 +311,9 @@ export default function Message({ msg, isThinking, isStreaming, showCopy, onAcce
       ) : (
         <div>
           {!isUser && msg.toolCalls?.length > 0 && <ToolCallsSection toolCalls={msg.toolCalls} />}
-          <div style={{ ...styles.messageContent, ...(msg.stopped ? { color: '#a0a098', fontStyle: 'italic', border: '1px solid #e5e3dc', background: '#fafaf8' } : {}) }}>
+          <div style={isUser ? styles.messageContentUser : { ...styles.messageContent, ...(msg.stopped ? { color: '#a0a098', fontStyle: 'italic', border: '1px solid #e5e3dc', background: '#fafaf8' } : {}) }}>
             {isUser ? (
-              <span style={styles.userText}>{msg.content}</span>
+              <span style={{ ...styles.userText, color: '#e8e6df' }}>{msg.content}</span>
             ) : (
               <>
                 <MarkdownContent text={stripEditMarkup(msg.content)} />

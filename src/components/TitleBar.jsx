@@ -36,7 +36,49 @@ function Divider() {
   return <div style={{ height: 1, background: '#f0ede8', margin: '4px 0' }} />;
 }
 
-export function TitleBar({ folder, onPickFolder, onNewChat, indexing }) {
+function GitBadge({ info }) {
+  if (!info) return null;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 5,
+      fontFamily: "'JetBrains Mono', monospace",
+      fontSize: 11, color: '#6b6960',
+      background: '#eceae3', border: '1px solid #dedad2',
+      borderRadius: 6, padding: '3px 8px',
+      WebkitAppRegion: 'no-drag',
+      userSelect: 'none',
+    }}>
+      {/* branch icon */}
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, opacity: 0.7 }}>
+        <circle cx="4" cy="4" r="2" stroke="currentColor" strokeWidth="1.5"/>
+        <circle cx="4" cy="12" r="2" stroke="currentColor" strokeWidth="1.5"/>
+        <circle cx="12" cy="4" r="2" stroke="currentColor" strokeWidth="1.5"/>
+        <path d="M4 6v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+        <path d="M4 6c0-2 8-2 8 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+      </svg>
+      <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {info.branch}
+      </span>
+      {/* dirty indicator */}
+      {info.dirty && (
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#d97706', flexShrink: 0 }} title="Uncommitted changes" />
+      )}
+      {/* ahead/behind */}
+      {info.ahead > 0 && (
+        <span style={{ fontSize: 10, color: '#8c8c84' }} title={`${info.ahead} commit${info.ahead !== 1 ? 's' : ''} ahead`}>
+          ↑{info.ahead}
+        </span>
+      )}
+      {info.behind > 0 && (
+        <span style={{ fontSize: 10, color: '#8c8c84' }} title={`${info.behind} commit${info.behind !== 1 ? 's' : ''} behind`}>
+          ↓{info.behind}
+        </span>
+      )}
+    </div>
+  );
+}
+
+export function TitleBar({ folder, onPickFolder, onNewChat, indexing, chatMode, setChatMode, gitInfo }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
 
@@ -75,13 +117,44 @@ export function TitleBar({ folder, onPickFolder, onNewChat, indexing }) {
           </div>
         )}
       </div>
-      {indexing && (
-        <div style={styles.titleBarCenter}>
-          <span style={{ fontSize: 11, color: '#8c8c84', fontWeight: 500 }}>
+      <div style={styles.titleBarCenter}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 2,
+          background: '#ebe8e1', border: '1px solid #e0deda',
+          borderRadius: 8, padding: 2, WebkitAppRegion: 'no-drag',
+        }}>
+          {['code', 'chat'].map((m) => {
+            const active = chatMode === m;
+            return (
+              <button
+                key={m}
+                onClick={() => setChatMode && setChatMode(m)}
+                style={{
+                  background: active ? '#ffffff' : 'transparent',
+                  border: 'none', cursor: 'pointer',
+                  color: active ? '#1a1a19' : '#6b6960',
+                  fontSize: 12, fontWeight: 500,
+                  padding: '4px 14px', borderRadius: 6,
+                  boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                  textTransform: 'capitalize',
+                  WebkitAppRegion: 'no-drag',
+                }}
+              >
+                {m}
+              </button>
+            );
+          })}
+        </div>
+        {indexing && (
+          <span style={{ fontSize: 11, color: '#8c8c84', fontWeight: 500, marginLeft: 12 }}>
             Indexing{indexing.total > 0 ? `… ${indexing.done}/${indexing.total}` : '…'}
           </span>
-        </div>
-      )}
+        )}
+      </div>
+      {/* Right: git badge */}
+      <div style={{ display: 'flex', alignItems: 'center', paddingRight: 12, WebkitAppRegion: 'no-drag' }}>
+        <GitBadge info={gitInfo} />
+      </div>
     </div>
   );
 }
