@@ -73,6 +73,7 @@ src/
 ├── renderer.jsx         # React entry point
 ├── App.jsx              # Root component — layout, state, chat orchestration
 ├── chatStore.js         # SQLite: sessions, messages, projects
+├── indexer.js           # RAG indexing, embedding, cosine scoring, re-ranking
 ├── hooks/
 │   └── useChat.js       # Chat state, streaming, system prompts
 ├── lib/
@@ -101,6 +102,30 @@ The agent runs up to 12 iterations. Each iteration the model either calls a tool
 | `search_code` | Semantic search via embeddings |
 | `run_bash` | Run a shell command (PowerShell on Windows) |
 | `web_search` | SearXNG web search |
+
+### RAG indexing (`indexer.js`)
+
+`search_code` is backed by a local embedding index built from the open folder.
+
+**Indexing pipeline:**
+1. Walk folder (up to 200 files, skipping `node_modules` / `dist` / etc.)
+2. Chunk each file into 30-line windows with 5-line overlap
+3. Embed each chunk via `ollama.embeddings({ model: 'nomic-embed-text' })`
+4. Persist embeddings to `.codelocal-index.json` inside the folder
+5. Extract structural metadata (imports, `importedBy`, symbols) into `.codelocal-meta.json`
+
+**Search pipeline:**
+1. Embed the query (cached per `model:query` key, up to 200 entries)
+2. Cosine similarity against all stored chunk embeddings
+3. Re-rank with symbol and path signals:
+   ```
+   final_score = cosine × 0.7 + symbol_match × 0.2 + path_match × 0.1
+   ```
+   - `symbol_match` — fraction of query tokens found in extracted symbols or chunk text
+   - `path_match` — any query token appears in the file path
+4. Return top-K chunks with merged ±40-line context windows
+
+The index is loaded once into memory and cached; subsequent searches skip disk I/O entirely.
 
 ### Multi-model tool call support
 
